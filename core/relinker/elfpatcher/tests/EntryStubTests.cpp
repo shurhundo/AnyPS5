@@ -146,6 +146,42 @@ void windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant() 
             "a scoped libkernel_sys import does not search the requested variant before canonical libkernel and libc");
 }
 
+void windowsStubOmitsRelroProtectionWhenNoRangeIsGiven() {
+    using namespace Elfpatcher::Windows;
+    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
+    const auto stub = windowsStub(nativeImports, "$ORIGIN/libs", {"libc.prx"});
+    require(ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("VirtualProtect")) == std::string::npos,
+            "the stub calls VirtualProtect even though no RELRO range was given");
+}
+
+void windowsStubProtectsTheRelroRangeWhenGiven() {
+    using namespace Elfpatcher::Windows;
+    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
+    const std::pair<std::uint32_t, std::uint32_t> relro{0x5000, 0x2000};
+    const auto stub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, {}, {}, "$ORIGIN/libs", false, false, {}, {}, false, relro);
+
+    const auto call = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("VirtualProtect"));
+    require(call != std::string::npos, "the RELRO stub does not call VirtualProtect");
+
+    const auto lea = ripReference(stub.Code, {0x48, 0x8d, 0x0d}, relro.first);
+    require(lea != std::string::npos, "the RELRO stub does not load the protected range's address into rcx");
+
+    std::size_t cursor = lea + 7;
+    require(bytesAt(stub.Code.Data, cursor, {0xba}), "the RELRO stub does not move the range's size into edx");
+    std::uint32_t size = 0;
+    std::memcpy(&size, stub.Code.Data.data() + cursor, sizeof(size));
+    cursor += 4;
+    require(size == relro.second, "the RELRO stub passes the wrong size to VirtualProtect");
+    require(bytesAt(stub.Code.Data, cursor, {0x41, 0xb8, 2, 0, 0, 0}), "the RELRO stub does not request PAGE_READONLY in r8d");
+    require(bytesAt(stub.Code.Data, cursor, {0x4c, 0x8d, 0x0d}), "the RELRO stub does not load the old-protection output pointer into r9 right before the call");
+    cursor += 4;
+    require(cursor == call, "the RELRO stub emits unexpected bytes between setting up its arguments and calling VirtualProtect");
+
+    const std::string relroError = "FAIL: cannot protect the RELRO segment\n";
+    require(std::search(stub.Data.Data.begin(), stub.Data.Data.end(), relroError.begin(), relroError.end()) != stub.Data.Data.end(),
+            "the RELRO stub does not register a failure message for a failed VirtualProtect call");
+}
+
 void windowsKernelVariantDependenciesLoadCanonicalKernel() {
     using namespace Elfpatcher::Windows;
     for (const auto& variant : {std::string("libkernel_sys.prx"), std::string("libkernel_web.prx")}) {
@@ -173,6 +209,8 @@ int main() {
         windowsLibSceAmprObjectImportsFallBackToTheLibcProvider();
         windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant();
         windowsKernelVariantDependenciesLoadCanonicalKernel();
+        windowsStubOmitsRelroProtectionWhenNoRangeIsGiven();
+        windowsStubProtectsTheRelroRangeWhenGiven();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
