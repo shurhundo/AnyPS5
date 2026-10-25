@@ -69,7 +69,7 @@ std::u16string toUtf16(const std::string& text) {
 
 }
 
-WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::optional<std::pair<std::uint32_t, std::uint32_t>> relroRange) const {
+WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, const std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, const bool lazyBinding, const bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules, const std::set<std::string>& unmatchedImportModules, const bool traceImports, const std::vector<std::pair<std::uint32_t, std::uint32_t>>& relroRanges) const {
     if (!imports.empty() && libraries.empty())
         throw Domain::RelinkerException("ELF imports have no DT_NEEDED libraries");
     const auto path = normalizeRunPath(runPath);
@@ -778,11 +778,11 @@ WindowsEntryStub WindowsEntryStubBuilder::Build(const std::uint32_t dataRva, con
     code.Rip({0x48, 0x8b, 0x3d}, argumentBlock);
     const auto exitCallback = code.Branch({0x48, 0x8d, 0x35});
     code.Emit({0x48, 0xc7, 0x44, 0x24, 0x40, 0, 0, 0, 0, 0x48, 0xc7, 0x44, 0x24, 0x48, 0, 0, 0, 0, 0x48, 0x8d, 0x6c, 0x24, 0x40});
-    if (relroRange) {
+    for (const auto& relroRange : relroRanges) {
         const auto oldProtect = reserve(4);
-        code.Rip({0x48, 0x8d, 0x0d}, relroRange->first);
+        code.Rip({0x48, 0x8d, 0x0d}, relroRange.first);
         code.Emit({0xba});
-        code.U32(relroRange->second);
+        code.U32(relroRange.second);
         code.Emit({0x41, 0xb8, 2, 0, 0, 0});
         code.Rip({0x4c, 0x8d, 0x0d}, oldProtect);
         call("VirtualProtect");

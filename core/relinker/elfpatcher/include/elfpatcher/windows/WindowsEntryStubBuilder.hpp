@@ -2,7 +2,6 @@
 #define ELFPATCHER_WINDOWS_ENTRYSTUBBUILDER_HPP
 
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
-#include <optional>
 #include <set>
 #include <utility>
 
@@ -22,7 +21,7 @@ struct WindowsEntryStub {
 
 class WindowsEntryStubBuilder {
 public:
-    WindowsEntryStub Build(std::uint32_t dataRva, std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, bool lazyBinding, bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules = {}, const std::set<std::string>& unmatchedImportModules = {}, bool traceImports = false, std::optional<std::pair<std::uint32_t, std::uint32_t>> relroRange = std::nullopt) const;
+    WindowsEntryStub Build(std::uint32_t dataRva, std::uint32_t entryRva, const WindowsImports& nativeImports, const std::vector<std::string>& libraries, const std::vector<PeImport>& imports, const std::string& runPath, bool lazyBinding, bool dependencyDiagnostics, const std::vector<Domain::GuestRuntime>& guestModules = {}, const std::set<std::string>& unmatchedImportModules = {}, bool traceImports = false, const std::vector<std::pair<std::uint32_t, std::uint32_t>>& relroRanges = {}) const;
 };
 
 }

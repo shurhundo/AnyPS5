@@ -154,17 +154,12 @@ void windowsStubOmitsRelroProtectionWhenNoRangeIsGiven() {
             "the stub calls VirtualProtect even though no RELRO range was given");
 }
 
-void windowsStubProtectsTheRelroRangeWhenGiven() {
-    using namespace Elfpatcher::Windows;
-    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
-    const std::pair<std::uint32_t, std::uint32_t> relro{0x5000, 0x2000};
-    const auto stub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, {}, {}, "$ORIGIN/libs", false, false, {}, {}, false, relro);
+std::size_t requireRelroProtectionCall(const Elfpatcher::Windows::WindowsEntryStub& stub, const Elfpatcher::Windows::WindowsImports& nativeImports, const std::pair<std::uint32_t, std::uint32_t>& relro, const std::size_t from) {
+    const auto call = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("VirtualProtect"), from);
+    require(call != std::string::npos, "the RELRO stub does not call VirtualProtect for every range");
 
-    const auto call = ripReference(stub.Code, {0xff, 0x15}, nativeImports.Functions.at("VirtualProtect"));
-    require(call != std::string::npos, "the RELRO stub does not call VirtualProtect");
-
-    const auto lea = ripReference(stub.Code, {0x48, 0x8d, 0x0d}, relro.first);
-    require(lea != std::string::npos, "the RELRO stub does not load the protected range's address into rcx");
+    const auto lea = ripReference(stub.Code, {0x48, 0x8d, 0x0d}, relro.first, from);
+    require(lea != std::string::npos && lea <= call, "the RELRO stub does not load the protected range's address into rcx");
 
     std::size_t cursor = lea + 7;
     require(bytesAt(stub.Code.Data, cursor, {0xba}), "the RELRO stub does not move the range's size into edx");
@@ -176,6 +171,18 @@ void windowsStubProtectsTheRelroRangeWhenGiven() {
     require(bytesAt(stub.Code.Data, cursor, {0x4c, 0x8d, 0x0d}), "the RELRO stub does not load the old-protection output pointer into r9 right before the call");
     cursor += 4;
     require(cursor == call, "the RELRO stub emits unexpected bytes between setting up its arguments and calling VirtualProtect");
+    return call;
+}
+
+void windowsStubProtectsEveryRelroRangeWhenGiven() {
+    using namespace Elfpatcher::Windows;
+    const auto nativeImports = WindowsImportBuilder().Build(0x1000);
+    const std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges{{0x5000, 0x2000}, {0x9000, 0x400}};
+    const auto stub = WindowsEntryStubBuilder().Build(0x40000, 0x1000, nativeImports, {}, {}, "$ORIGIN/libs", false, false, {}, {}, false, ranges);
+
+    const auto firstCall = requireRelroProtectionCall(stub, nativeImports, ranges[0], 0);
+    const auto secondCall = requireRelroProtectionCall(stub, nativeImports, ranges[1], firstCall + 1);
+    require(secondCall > firstCall, "the RELRO stub does not protect every disjoint range with its own VirtualProtect call");
 
     const std::string relroError = "FAIL: cannot protect the RELRO segment\n";
     require(std::search(stub.Data.Data.begin(), stub.Data.Data.end(), relroError.begin(), relroError.end()) != stub.Data.Data.end(),
@@ -210,7 +217,7 @@ int main() {
         windowsKernelVariantImportsSearchCanonicalKernelAfterTheRequestedVariant();
         windowsKernelVariantDependenciesLoadCanonicalKernel();
         windowsStubOmitsRelroProtectionWhenNoRangeIsGiven();
-        windowsStubProtectsTheRelroRangeWhenGiven();
+        windowsStubProtectsEveryRelroRangeWhenGiven();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
